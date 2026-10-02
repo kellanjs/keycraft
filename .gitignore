@@ -13,11 +13,6 @@ yarn-debug.log*
 yarn-error.log*
 lerna-debug.log*
 
-# Next.js (for docs site)
-.next/
-out/
-next-env.d.ts
-
 # Deployments
 .vercel
 

@@ -1,11 +1,8 @@
 {
   "compilerOptions": {
     /* Base Options */
-    "esModuleInterop": true,
     "skipLibCheck": true,
     "target": "es2022",
-    "allowJs": true,
-    "resolveJsonModule": true,
     "moduleDetection": "force",
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
@@ -20,10 +17,7 @@
     "module": "NodeNext",
     "outDir": "./dist",
     "rootDir": "./src",
-    "sourceMap": true,
-    "declaration": true,
-    "declarationMap": true
+    "declaration": true
   },
-  "include": ["src"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src"]
 }

@@ -1,408 +1,300 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { keycraft } from "../src/keycraft.js";
+import { keycraft, segment } from "../src/index.js";
 
-describe("keycraft", () => {
-  describe("basic key generation", () => {
-    it("should create simple leaf nodes with $key", () => {
-      const k = keycraft({
-        users: { all: null },
-      });
-
-      expect(k.users.all.$key).toEqual(["users", "all"]);
+describe("keys", () => {
+  it("gives every node the path to it as its key", () => {
+    const keys = keycraft({
+      users: {
+        list: null,
+        recent: {},
+        active: { premium: null },
+      },
+      settings: null,
     });
 
-    it("should handle empty object as leaf node", () => {
-      const k = keycraft({
-        posts: { recent: {} },
-      });
-
-      expect(k.posts.recent.$key).toEqual(["posts", "recent"]);
-    });
-
-    it("should create nested hierarchies", () => {
-      const k = keycraft({
-        users: {
-          active: {
-            premium: null,
-          },
-        },
-      });
-
-      expect(k.users.active.premium.$key).toEqual([
-        "users",
-        "active",
-        "premium",
-      ]);
-    });
+    expect(keys.users.$key).toEqual(["users"]);
+    expect(keys.users.list.$key).toEqual(["users", "list"]);
+    expect(keys.users.recent.$key).toEqual(["users", "recent"]);
+    expect(keys.users.active.premium.$key).toEqual([
+      "users",
+      "active",
+      "premium",
+    ]);
+    expect(keys.settings.$key).toEqual(["settings"]);
   });
 
-  describe("$scope functionality", () => {
-    it("should make nodes callable with $scope", () => {
-      const k = keycraft({
-        users: {
-          userId: {
-            $scope: (id: string) => id,
-          },
-        },
-      });
+  it("returns the same key every time for nodes without a scope", () => {
+    const keys = keycraft({ users: { list: null } });
 
-      const userNode = k.users.userId("user-123");
-      expect(userNode.$key).toEqual(["users", "userId", "user-123"]);
-    });
-
-    it("should support object scope arguments", () => {
-      const k = keycraft({
-        users: {
-          filter: {
-            $scope: (filters: { status: string; role: string }) =>
-              `${filters.status}-${filters.role}`,
-            posts: { all: null },
-          },
-        },
-      });
-
-      const filters = { status: "active", role: "admin" };
-
-      expect(k.users.filter(filters).$key).toEqual([
-        "users",
-        "filter",
-        "active-admin",
-      ]);
-      expect(k.users.filter(filters).posts.all.$key).toEqual([
-        "users",
-        "filter",
-        "active-admin",
-        "posts",
-        "all",
-      ]);
-    });
-
-    it("should support numeric scope values", () => {
-      const k = keycraft({
-        posts: {
-          postId: {
-            $scope: (id: number) => id,
-          },
-        },
-      });
-
-      expect(k.posts.postId(42).$key).toEqual(["posts", "postId", 42]);
-    });
-
-    it("should allow scope transformation", () => {
-      const k = keycraft({
-        users: {
-          userId: {
-            $scope: (id: string) => `user-${id}`,
-          },
-        },
-      });
-
-      expect(k.users.userId("123").$key).toEqual([
-        "users",
-        "userId",
-        "user-123",
-      ]);
-    });
-
-    it("should preserve children on scoped nodes", () => {
-      const k = keycraft({
-        users: {
-          userId: {
-            $scope: (id: string) => id,
-            posts: { all: null },
-          },
-        },
-      });
-
-      expect(k.users.userId("abc").posts.all.$key).toEqual([
-        "users",
-        "userId",
-        "abc",
-        "posts",
-        "all",
-      ]);
-    });
-
-    it("should allow accessing children before calling scope", () => {
-      const k = keycraft({
-        users: {
-          userId: {
-            $scope: (id: string) => id,
-            posts: { all: null },
-          },
-        },
-      });
-
-      // Access child without calling scope first
-      expect(k.users.userId.posts.all.$key).toEqual([
-        "users",
-        "userId",
-        "posts",
-        "all",
-      ]);
-    });
+    expect(keys.users.list.$key).toBe(keys.users.list.$key);
   });
 
-  describe("complex hierarchies", () => {
-    it("should handle multiple levels of scoping", () => {
-      const k = keycraft({
-        users: {
-          userId: {
-            $scope: (userId: string) => userId,
-            posts: {
-              postId: {
-                $scope: (postId: number) => postId,
-                comments: { all: null },
-              },
+  it("treats numeric property names as strings, like JavaScript does", () => {
+    const keys = keycraft({ v1: { 2: null } });
+
+    expect(keys.v1[2].$key).toEqual(["v1", "2"]);
+  });
+});
+
+describe("$scope", () => {
+  const keys = keycraft({
+    users: {
+      byId: {
+        $scope: (id: string) => id,
+        posts: { list: null },
+      },
+    },
+  });
+
+  it("makes a node callable, adding the scope's return value to the key", () => {
+    expect(keys.users.byId("42").$key).toEqual(["users", "byId", "42"]);
+    expect(keys.users.byId("42").posts.list.$key).toEqual([
+      "users",
+      "byId",
+      "42",
+      "posts",
+      "list",
+    ]);
+  });
+
+  it("keeps the uncalled node's key, which every scoped key starts with", () => {
+    expect(keys.users.byId.$key).toEqual(["users", "byId"]);
+  });
+
+  it("puts children only on the node the call returns", () => {
+    expect("posts" in keys.users.byId).toBe(false);
+    expect("posts" in keys.users.byId("42")).toBe(true);
+  });
+
+  it("calls the scope each time, with every argument", () => {
+    const scope = vi.fn((from: number, to: number) => `${from}-${to}`);
+    const ranges = keycraft({ range: { $scope: scope } });
+
+    expect(ranges.range(1, 5).$key).toEqual(["range", "1-5"]);
+    expect(ranges.range(6, 9).$key).toEqual(["range", "6-9"]);
+    expect(scope.mock.calls).toEqual([
+      [1, 5],
+      [6, 9],
+    ]);
+  });
+
+  it("supports scopes without parameters", () => {
+    const flags = keycraft({ flags: { $scope: () => "current" } });
+
+    expect(flags.flags().$key).toEqual(["flags", "current"]);
+  });
+
+  it("adds the return value as one element, even an array or object", () => {
+    const search = keycraft({
+      search: { $scope: (query: string, tags: string[]) => ({ query, tags }) },
+      range: { $scope: (from: number, to: number) => [from, to] },
+    });
+
+    expect(search.search("cats", ["a"]).$key).toEqual([
+      "search",
+      { query: "cats", tags: ["a"] },
+    ]);
+    expect(search.range(1, 5).$key).toEqual(["range", [1, 5]]);
+  });
+
+  it("keeps undefined in the key, so it can't collide with a child", () => {
+    const todos = keycraft({
+      page: { $scope: (page?: number) => page, items: null },
+    });
+
+    expect(todos.page().$key).toEqual(["page", undefined]);
+    expect(todos.page().$key).toHaveLength(2);
+    expect(todos.page().items.$key).toEqual(["page", undefined, "items"]);
+  });
+
+  it("supports scopes inside scopes", () => {
+    const feed = keycraft({
+      users: {
+        byId: {
+          $scope: (id: string) => id,
+          posts: {
+            byId: {
+              $scope: (id: number) => id,
+              comments: null,
             },
           },
         },
-      });
-
-      expect(
-        k.users.userId("user-1").posts.postId(42).comments.all.$key,
-      ).toEqual([
-        "users",
-        "userId",
-        "user-1",
-        "posts",
-        "postId",
-        42,
-        "comments",
-        "all",
-      ]);
+      },
     });
 
-    it("should handle sibling branches", () => {
-      const k = keycraft({
-        users: {
-          all: null,
-          active: null,
-          userId: {
-            $scope: (id: string) => id,
-          },
-        },
-      });
-
-      expect(k.users.all.$key).toEqual(["users", "all"]);
-      expect(k.users.active.$key).toEqual(["users", "active"]);
-      expect(k.users.userId("123").$key).toEqual(["users", "userId", "123"]);
-    });
-
-    it("should handle multiple top-level segments", () => {
-      const k = keycraft({
-        users: { all: null },
-        posts: { recent: null },
-        comments: { pending: null },
-      });
-
-      expect(k.users.all.$key).toEqual(["users", "all"]);
-      expect(k.posts.recent.$key).toEqual(["posts", "recent"]);
-      expect(k.comments.pending.$key).toEqual(["comments", "pending"]);
-    });
+    expect(feed.users.byId("u1").posts.byId(7).comments.$key).toEqual([
+      "users",
+      "byId",
+      "u1",
+      "posts",
+      "byId",
+      7,
+      "comments",
+    ]);
   });
 
-  describe("edge cases", () => {
-    it("should filter undefined values from keys", () => {
-      const k = keycraft({
-        test: {
-          $scope: (id: string | undefined) => id as any,
-        },
-      });
-
-      expect(k.test(undefined).$key).toEqual(["test"]);
+  it("can scope a top-level node", () => {
+    const tenants = keycraft({
+      tenant: { $scope: (id: string) => id, users: null },
     });
 
-    it("should ignore top-level properties starting with $", () => {
-      const k = keycraft({
-        $metadata: "ignored" as any,
-        users: { all: null },
-      });
+    expect(tenants.tenant.$key).toEqual(["tenant"]);
+    expect(tenants.tenant("t1").users.$key).toEqual(["tenant", "t1", "users"]);
+  });
+});
 
-      expect(k).toHaveProperty("users");
-      expect(k).not.toHaveProperty("$metadata");
-    });
+describe("segment", () => {
+  it("returns the definition unchanged", () => {
+    const definition = { $scope: (id: string) => id, posts: null };
 
-    it("should skip invalid primitive child definitions", () => {
-      const k = keycraft({
-        users: {
-          invalid: 123 as any,
-          all: null,
-        },
-      });
-
-      expect(k.users).toHaveProperty("all");
-      expect(k.users).not.toHaveProperty("invalid");
-      expect(k.users.all.$key).toEqual(["users", "all"]);
-    });
-
-    it("should handle empty definition", () => {
-      const k = keycraft({});
-      expect(Object.keys(k)).toEqual([]);
-    });
-
-    it("should ignore properties starting with $", () => {
-      const k = keycraft({
-        users: {
-          $metadata: "ignored" as any,
-          all: null,
-        },
-      });
-
-      expect(k.users).toHaveProperty("all");
-      expect(k.users).not.toHaveProperty("$metadata");
-    });
-
-    it("should handle null definition", () => {
-      const k = keycraft({
-        users: null,
-      });
-
-      expect(k.users.$key).toEqual(["users"]);
-    });
+    expect(segment(definition)).toBe(definition);
   });
 
-  describe("$key immutability", () => {
-    it("should have non-enumerable $key property", () => {
-      const k = keycraft({
-        users: { all: null },
-      });
-
-      const keys = Object.keys(k.users.all);
-      expect(keys).not.toContain("$key");
+  it("can be reused in several places and inside other segments", () => {
+    const paginated = segment({
+      page: { $scope: (page: number) => page },
+    });
+    const user = segment({
+      $scope: (id: string) => id,
+      posts: paginated,
     });
 
-    it("should keep $key non-enumerable on scoped nodes", () => {
-      const k = keycraft({
-        users: {
-          userId: {
-            $scope: (id: string) => id,
-          },
-        },
-      });
+    const keys = keycraft({ users: user, posts: paginated });
 
-      const scopedNode = k.users.userId("user-123");
-      const keys = Object.keys(scopedNode);
+    expect(keys.users("42").posts.page(2).$key).toEqual([
+      "users",
+      "42",
+      "posts",
+      "page",
+      2,
+    ]);
+    expect(keys.posts.page(3).$key).toEqual(["posts", "page", 3]);
+  });
+});
 
-      expect(keys).not.toContain("$key");
-      expect(scopedNode.$key).toEqual(["users", "userId", "user-123"]);
-    });
+describe("nodes", () => {
+  it("accept any child name, including ones functions and objects have", () => {
+    const names = [
+      "name",
+      "length",
+      "caller",
+      "arguments",
+      "call",
+      "toString",
+      "constructor",
+      "hasOwnProperty",
+      "__proto__",
+    ];
+    const children = Object.fromEntries(names.map((name) => [name, null]));
+    const keys = keycraft({
+      // A function node and the plain node its call returns
+      byId: { $scope: (id: string) => id, ...children },
+      plain: children,
+    } as never) as Record<string, Record<string, { $key: unknown }>> & {
+      byId: (id: string) => Record<string, { $key: unknown }>;
+    };
 
-    it("should not allow $key modification", () => {
-      const k = keycraft({
-        users: { all: null },
-      });
-
-      expect(() => {
-        (k.users.all as any).$key = ["modified"];
-      }).toThrow();
-    });
-
-    it("should return readonly array for $key", () => {
-      const k = keycraft({
-        users: { all: null },
-      });
-
-      const key = k.users.all.$key;
-      // TypeScript enforces readonly at compile time
-      // At runtime, the array is still mutable in non-strict mode
-      expect(Array.isArray(key)).toBe(true);
-      expect(key).toEqual(["users", "all"]);
-    });
+    for (const name of names) {
+      expect(Object.hasOwn(keys.byId("1"), name)).toBe(true);
+      expect(keys.byId("1")[name]?.$key).toEqual(["byId", "1", name]);
+      expect(keys.plain?.[name]?.$key).toEqual(["plain", name]);
+    }
   });
 
-  describe("real-world scenarios", () => {
-    it("should support typical React Query patterns", () => {
-      const k = keycraft({
-        users: {
-          all: null,
-          userId: {
-            $scope: (id: string) => id,
-            profile: null,
-            posts: {
-              all: null,
-              postId: {
-                $scope: (postId: number) => postId,
-              },
-            },
-          },
-        },
-        posts: {
-          all: null,
-          trending: null,
-        },
-      });
-
-      // List queries
-      expect(k.users.all.$key).toEqual(["users", "all"]);
-      expect(k.posts.all.$key).toEqual(["posts", "all"]);
-
-      // Detail queries
-      expect(k.users.userId("123").profile.$key).toEqual([
-        "users",
-        "userId",
-        "123",
-        "profile",
-      ]);
-
-      // Nested queries
-      expect(k.users.userId("123").posts.all.$key).toEqual([
-        "users",
-        "userId",
-        "123",
-        "posts",
-        "all",
-      ]);
-
-      expect(k.users.userId("123").posts.postId(456).$key).toEqual([
-        "users",
-        "userId",
-        "123",
-        "posts",
-        "postId",
-        456,
-      ]);
+  it("list their children but not their key", () => {
+    const keys = keycraft({
+      users: { list: null, byId: { $scope: (id: string) => id, posts: null } },
     });
 
-    it("should support pagination patterns", () => {
-      const k = keycraft({
-        posts: {
-          page: {
-            $scope: (page: number) => page,
-            limit: {
-              $scope: (limit: number) => limit,
-            },
-          },
-        },
-      });
+    expect(Object.keys(keys)).toEqual(["users"]);
+    expect(Object.keys(keys.users)).toEqual(["list", "byId"]);
+    expect(Object.keys(keys.users.byId("1"))).toEqual(["posts"]);
+  });
 
-      expect(k.posts.page(1).limit(10).$key).toEqual([
-        "posts",
-        "page",
-        1,
-        "limit",
-        10,
-      ]);
+  it("can't be changed, and neither can their keys", () => {
+    const keys = keycraft({
+      users: { list: null, byId: { $scope: (id: string) => id } },
     });
 
-    it("should support filter patterns", () => {
-      const k = keycraft({
-        users: {
-          filter: {
-            $scope: (filters: { status: string; role: string }) =>
-              JSON.stringify(filters),
-          },
-        },
-      });
+    expect(Object.isFrozen(keys)).toBe(true);
+    expect(Object.isFrozen(keys.users)).toBe(true);
+    expect(Object.isFrozen(keys.users.list.$key)).toBe(true);
+    expect(Object.isFrozen(keys.users.byId)).toBe(true);
+    expect(Object.isFrozen(keys.users.byId("1").$key)).toBe(true);
+    expect(() => {
+      (keys.users.list.$key as unknown as unknown[]).push("x");
+    }).toThrow(TypeError);
+    expect(keys.users.list.$key).toEqual(["users", "list"]);
+  });
 
-      const filters = { status: "active", role: "admin" };
-      expect(k.users.filter(filters).$key).toEqual([
-        "users",
-        "filter",
-        JSON.stringify(filters),
-      ]);
+  it("can be used in a string, e.g. in a log message", () => {
+    const keys = keycraft({
+      users: { byId: { $scope: (id: string) => id } },
     });
+
+    expect(`${keys.users.byId("42")}`).toBe('["users","byId","42"]');
+    expect(String(keys.users.byId)).toBe('["users","byId"]');
+  });
+});
+
+describe("invalid definitions", () => {
+  // Each of these is also a type error; the casts check the runtime checks,
+  // which are what JavaScript callers get.
+  it.each([
+    ["not an object", null, "keycraft() takes an object of keys."],
+    ["an array", [], "keycraft() takes an object of keys."],
+    [
+      "a top-level key starting with $",
+      { $meta: null },
+      'Keycraft key "$meta" can\'t start with "$": that prefix is reserved for keycraft\'s own properties, like $scope.',
+    ],
+    [
+      "a misspelt $scope",
+      { users: { $scoep: (id: string) => id } },
+      'Keycraft key "users.$scoep" can\'t start with "$": that prefix is reserved for keycraft\'s own properties, like $scope.',
+    ],
+    [
+      "a function without $scope",
+      { users: { byId: (id: string) => id } },
+      'Keycraft key "users.byId" is a function. To make a key that takes arguments, use { $scope: ... }.',
+    ],
+    [
+      "a number",
+      { users: { count: 1 } },
+      'Keycraft key "users.count" must be null or an object.',
+    ],
+    [
+      "an array",
+      { users: [] },
+      'Keycraft key "users" must be null or an object.',
+    ],
+    [
+      "an instance of a class",
+      { users: new Map() },
+      'Keycraft key "users" must be null or an object.',
+    ],
+    [
+      "a $scope that isn't a function",
+      { users: { $scope: "id" } },
+      'Keycraft key "users.$scope" must be a function.',
+    ],
+  ])("throws for %s", (_label, definition, message) => {
+    expect(() => keycraft(definition as never)).toThrow(new TypeError(message));
+  });
+
+  it("throws for a definition that contains itself", () => {
+    const users: Record<string, unknown> = { list: null };
+    users.again = { users };
+
+    expect(() => keycraft({ users } as never)).toThrow(
+      new TypeError('Keycraft key "users.again.users" contains itself.'),
+    );
+  });
+
+  it("allows the same segment in several places", () => {
+    const shared = { list: null };
+
+    expect(() => keycraft({ a: shared, b: { c: shared } })).not.toThrow();
   });
 });
