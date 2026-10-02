@@ -1,6 +1,6 @@
 {
   "name": "@kellanjs/keycraft",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Type-safe query keys for TypeScript: describe your keys once as a tree, and read every key from it with exact types. Made for TanStack Query; works with any library that uses array keys.",
   "keywords": [
     "query-keys",
